@@ -1,0 +1,56 @@
+{
+    "name": "ngfw/webparser",
+    "description": "WebParser is a PHP library that allows developers to parse and query webpages using an ORM-like syntax. It facilitates the extraction of HTML elements by chaining operations such as filtering by ID or class, ordering results, and limiting output. WebParser offers a flexible interface for exploring and extracting data from the web, making it ideal for web scraping and data analysis tasks.",
+    "keywords": [
+        "ngfw",
+        "webparser",
+        "web scraping",
+        "html parsing",
+        "php",
+        "laravel"
+    ],
+    "homepage": "https://github.com/ngfw/webparser",
+    "license": "MIT",
+    "type": "library",
+    "authors": [
+        {
+            "name": "Nick Gejadze",
+            "email": "gejadze@gmail.com",
+            "role": "Developer"
+        }
+    ],
+    "require": {
+        "php": "^8.0",
+        "illuminate/support": "^11.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.6"
+    },
+    "autoload": {
+        "psr-4": {
+            "Ngfw\\Webparser\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Ngfw\\Webparser\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit",
+        "test-coverage": "vendor/bin/phpunit --coverage-html coverage"
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Ngfw\\Webparser\\WebparserServiceProvider"
+            ],
+            "aliases": {
+                "Webparser": "Ngfw\\Webparser\\WebparserFacade"
+            }
+        }
+    }
+}

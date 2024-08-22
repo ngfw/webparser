@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comprehensive Test Page</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 text-gray-900">
+
+    <header id="header" class="container mx-auto p-6 bg-blue-500 text-white">
+        <h1 class="text-4xl font-bold">Test Page</h1>
+        <nav class="mt-4">
+            <ul class="flex space-x-4">
+                <li><a href="#" class="hover:underline">Home</a></li>
+                <li><a href="#" class="hover:underline">About</a></li>
+                <li><a href="#" class="hover:underline">Contact</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main id="root" class="content" data-order="1">
+        <section class="texts" data-order="1">
+            <h2>Section 1</h2>
+            <p>This is a paragraph in section 1.</p>
+            <div class="actions">
+                <button class="save" data-action="save">Save</button>
+                <button class="delete" data-action="delete">Delete</button>
+            </div>
+        </section>
+        <section class="texts" data-order="2">
+            <h2>Section 2</h2>
+            <p>This is a paragraph in section 2.</p>
+            <div class="actions">
+                <button class="save" data-action="save">Save</button>
+                <button class="delete" data-action="delete">Delete</button>
+            </div>
+        </section>
+        <section class="other" data-order="3">
+            <h2>Section 3</h2>
+            <p>This is a paragraph in section 3.</p>
+            <div class="actions">
+                <button class="publish" data-action="publish">Publish</button>
+            </div>
+        </section>
+    </main>
+    
+
+    <aside class="container mx-auto p-6 bg-white shadow-md mt-6">
+        <h2 class="text-3xl font-semibold">Sidebar</h2>
+        <ul class="list-disc list-inside mt-4 text-gray-700">
+            <li><a href="#" class="hover:underline">Link 1</a></li>
+            <li><a href="#" class="hover:underline">Link 2</a></li>
+            <li><a href="#" class="hover:underline">Link 3</a></li>
+        </ul>
+    </aside>
+
+    <footer id="footer" class="container mx-auto p-6 bg-blue-500 text-white mt-6">
+        <p>&copy; 2024 Test Company. All rights reserved.</p>
+    </footer>
+
+</body>
+</html>
