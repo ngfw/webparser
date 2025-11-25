@@ -21,6 +21,7 @@
     ],
     "require": {
         "php": "^8.0",
+        "guzzlehttp/guzzle": "^7.0",
         "illuminate/support": "^11.0"
     },
     "require-dev": {
@@ -49,7 +50,7 @@
                 "Ngfw\\Webparser\\WebparserServiceProvider"
             ],
             "aliases": {
-                "Webparser": "Ngfw\\Webparser\\WebparserFacade"
+                "WebParser": "Ngfw\\Webparser\\Facades\\WebParser"
             }
         }
     }

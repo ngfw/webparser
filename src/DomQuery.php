@@ -2,106 +2,188 @@
 
 namespace Ngfw\Webparser;
 
+use ArrayIterator;
+use DOMElement;
+use DOMNodeList;
 use DOMXPath;
 use Exception;
 use DOMDocument;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\RequestException;
 use Illuminate\Support\Collection;
+use InvalidArgumentException;
 
 class DomQuery
 {
     /**
      * The DOMDocument instance.
-     *
-     * @var \DOMDocument
      */
-    protected $document;
+    protected DOMDocument $document;
 
     /**
      * The DOMXPath instance.
-     *
-     * @var \DOMXPath
      */
-    protected $xpath;
+    protected DOMXPath $xpath;
 
     /**
      * The current XPath query.
-     *
-     * @var string|null
      */
-    protected $query;
+    protected ?string $query = null;
 
     /**
      * The selected elements.
      *
-     * @var \ArrayIterator
+     * @var ArrayIterator|DOMNodeList|array
      */
-    protected $elements;
+    protected ArrayIterator|DOMNodeList|array $elements;
 
     /**
      * The selection type for the current query.
-     *
-     * @var string
      */
-    protected $selectionType;
+    protected string $selectionType = '*';
 
     /**
      * Create a new WebParser instance.
      *
-     * @param  \DOMDocument  $document
-     * @param  mixed  $elements
-     * @return void
+     * @param DOMDocument $document
+     * @param ArrayIterator|DOMNodeList|array|null $elements
      */
-    public function __construct(DOMDocument $document, $elements = null)
+    public function __construct(DOMDocument $document, ArrayIterator|DOMNodeList|array|null $elements = null)
     {
         $this->document = $document;
         $this->xpath = new DOMXPath($document);
-        $this->elements = $elements ?? $this->xpath->query('//*');
+        $this->elements = $elements ?? $this->xpath->query('//*') ?? new ArrayIterator([]);
     }
 
     /**
      * Create a new WebParser instance from a URL using Guzzle.
      *
-     * @param  string  $url
+     * @param string $url
+     * @param array $options Guzzle request options
      * @return self
      *
-     * @throws \Exception
+     * @throws Exception
      */
-    public static function fromUrl(string $url): self
+    public static function fromUrl(string $url, array $options = []): self
     {
+        if (!filter_var($url, FILTER_VALIDATE_URL)) {
+            throw new InvalidArgumentException("Invalid URL provided: $url");
+        }
+
         $client = new Client();
 
         try {
-            $response = $client->get($url);
+            $response = $client->get($url, $options);
             $html = (string) $response->getBody();
         } catch (RequestException $e) {
             throw new Exception("Unable to load content from the URL: $url. Error: " . $e->getMessage());
         }
 
-        $document = new DOMDocument();
-        @$document->loadHTML($html);
-
-        return new self($document);
+        return self::fromHtml($html);
     }
 
     /**
      * Create a new WebParser instance from HTML content.
      *
-     * @param  string  $html
+     * @param string $html
      * @return self
      */
     public static function fromHtml(string $html): self
     {
         $document = new DOMDocument();
-        @$document->loadHTML($html);
+
+        // Handle empty HTML gracefully
+        if (trim($html) === '') {
+            return new self($document, new ArrayIterator([]));
+        }
+
+        // Use internal errors to avoid suppressing with @ operator
+        $previousUseErrors = libxml_use_internal_errors(true);
+        $document->loadHTML($html, LIBXML_NOERROR | LIBXML_NOWARNING);
+        libxml_clear_errors();
+        libxml_use_internal_errors($previousUseErrors);
+
         return new self($document);
+    }
+
+    /**
+     * Escape a string for use in XPath queries to prevent XPath injection.
+     *
+     * @param string $value The value to escape
+     * @return string The escaped value safe for XPath
+     */
+    protected static function escapeXPathValue(string $value): string
+    {
+        // If the value contains no single quotes, wrap in single quotes
+        if (strpos($value, "'") === false) {
+            return "'" . $value . "'";
+        }
+
+        // If the value contains no double quotes, wrap in double quotes
+        if (strpos($value, '"') === false) {
+            return '"' . $value . '"';
+        }
+
+        // If the value contains both, use concat() to safely construct the string
+        $parts = [];
+        $current = '';
+
+        for ($i = 0; $i < strlen($value); $i++) {
+            $char = $value[$i];
+            if ($char === "'") {
+                if ($current !== '') {
+                    $parts[] = "'" . $current . "'";
+                    $current = '';
+                }
+                $parts[] = '"\'"';
+            } else {
+                $current .= $char;
+            }
+        }
+
+        if ($current !== '') {
+            $parts[] = "'" . $current . "'";
+        }
+
+        return 'concat(' . implode(',', $parts) . ')';
+    }
+
+    /**
+     * Validate and sanitize a tag/element name for XPath.
+     *
+     * @param string $name
+     * @return string
+     * @throws InvalidArgumentException
+     */
+    protected static function sanitizeElementName(string $name): string
+    {
+        // Element names must start with a letter or underscore and contain only valid characters
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_\-]*$/', $name)) {
+            throw new InvalidArgumentException("Invalid element name: $name");
+        }
+        return $name;
+    }
+
+    /**
+     * Validate and sanitize an attribute name for XPath.
+     *
+     * @param string $name
+     * @return string
+     * @throws InvalidArgumentException
+     */
+    protected static function sanitizeAttributeName(string $name): string
+    {
+        // Attribute names follow similar rules to element names, but can include colons for namespaces
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_\-:]*$/', $name)) {
+            throw new InvalidArgumentException("Invalid attribute name: $name");
+        }
+        return $name;
     }
 
     /**
      * Get the DOMDocument instance.
      *
-     * @return \DOMDocument
+     * @return DOMDocument
      */
     public function getDocument(): DOMDocument
     {
@@ -111,85 +193,101 @@ class DomQuery
     /**
      * Select elements by a CSS-like selector.
      *
-     * @param  string  $selector
+     * @param string $selector
      * @return self
      */
-    public function where($selector): self
+    public function where(string $selector): self
     {
         if (str_starts_with($selector, '#')) {
             return $this->whereId(ltrim($selector, '#'));
         } elseif (str_starts_with($selector, '.')) {
-            $classes = array_filter(explode(' ', $selector), fn($class) => !empty($class));
-            $xpathQuery = "//*[" . implode(' and ', array_map(fn($class) => "contains(concat(' ', normalize-space(@class), ' '), ' " . trim($class, '.') . " ')", $classes)) . "]";
-            $this->elements = $this->xpath->query($xpathQuery);
+            $classes = array_filter(explode(' ', $selector), fn($class) => !empty(trim($class)));
+            $conditions = array_map(function ($class) {
+                $className = trim($class, '.');
+                $escapedClass = self::escapeXPathValue(' ' . $className . ' ');
+                return "contains(concat(' ', normalize-space(@class), ' '), $escapedClass)";
+            }, $classes);
+
+            $xpathQuery = "//*[" . implode(' and ', $conditions) . "]";
+            $result = $this->xpath->query($xpathQuery);
+            $this->elements = $result !== false ? $result : new ArrayIterator([]);
             return $this;
         } else {
             return $this->whereTag($selector);
         }
     }
 
-
     /**
      * Select elements by their ID.
      *
-     * @param  string  $id
+     * @param string $id
      * @return self
      */
-    public function whereId($id): self
+    public function whereId(string $id): self
     {
-        $this->elements = $this->xpath->query("//*[@id='$id']");
+        $escapedId = self::escapeXPathValue($id);
+        $result = $this->xpath->query("//*[@id=$escapedId]");
+        $this->elements = $result !== false ? $result : new ArrayIterator([]);
         return $this;
     }
 
     /**
      * Select elements by their class.
      *
-     * @param  string  $class
+     * @param string $class
      * @return self
      */
-    public function whereClass($class): self
+    public function whereClass(string $class): self
     {
-        $this->elements = $this->xpath->query("//*[contains(concat(' ', normalize-space(@class), ' '), ' $class ')]");
+        $escapedClass = self::escapeXPathValue(' ' . $class . ' ');
+        $result = $this->xpath->query("//*[contains(concat(' ', normalize-space(@class), ' '), $escapedClass)]");
+        $this->elements = $result !== false ? $result : new ArrayIterator([]);
         return $this;
     }
 
     /**
      * Select elements by their tag name.
      *
-     * @param  string  $tag
+     * @param string $tag
      * @return self
      */
-    public function whereTag($tag): self
+    public function whereTag(string $tag): self
     {
-        $this->elements = $this->xpath->query("//{$tag}");
+        $sanitizedTag = self::sanitizeElementName($tag);
+        $result = $this->xpath->query("//{$sanitizedTag}");
+        $this->elements = $result !== false ? $result : new ArrayIterator([]);
         return $this;
     }
 
     /**
      * Select elements by a specific attribute and value.
      *
-     * @param  string  $attribute
-     * @param  string  $value
+     * @param string $attribute
+     * @param string $value
      * @return self
      */
-    public function whereAttribute($attribute, $value): self
+    public function whereAttribute(string $attribute, string $value): self
     {
-        $this->elements = $this->xpath->query("//*[@$attribute='$value']");
+        $sanitizedAttr = self::sanitizeAttributeName($attribute);
+        $escapedValue = self::escapeXPathValue($value);
+        $result = $this->xpath->query("//*[@{$sanitizedAttr}=$escapedValue]");
+        $this->elements = $result !== false ? $result : new ArrayIterator([]);
         return $this;
     }
 
     /**
      * Find elements within the current selection by their tag name.
      *
-     * @param  string  $tag
+     * @param string $tag
      * @return self
      */
-    public function find($tag): self
+    public function find(string $tag): self
     {
+        $sanitizedTag = self::sanitizeElementName($tag);
         $filteredElements = [];
 
         foreach ($this->elements as $element) {
-            $nodes = $this->xpath->query(".//{$tag}", $element);
+            $nodes = $this->xpath->query(".//{$sanitizedTag}", $element);
 
             if ($nodes !== false && $nodes->length > 0) {
                 foreach ($nodes as $node) {
@@ -198,17 +296,17 @@ class DomQuery
             }
         }
 
-        $this->elements = new \ArrayIterator($filteredElements);
+        $this->elements = new ArrayIterator($filteredElements);
         return $this;
     }
 
     /**
      * Apply a selection type (e.g., 'text', 'tag', 'domelement') to the elements.
      *
-     * @param  string  $select
+     * @param string $select
      * @return self
      */
-    public function select($select = '*'): self
+    public function select(string $select = '*'): self
     {
         $this->selectionType = $select;
         return $this;
@@ -217,32 +315,31 @@ class DomQuery
     /**
      * Apply the selection type to a given element.
      *
-     * @param  \DOMElement  $element
+     * @param DOMElement $element
      * @return mixed
      */
-    protected function applySelection($element)
+    protected function applySelection(DOMElement $element): mixed
     {
-        if ($this->selectionType === 'text') {
-            return trim($element->textContent);
-        } elseif ($this->selectionType === 'tag') {
-            return $element->nodeName;
-        } elseif ($this->selectionType === 'domelement') {
-            return $element;
-        } else {
-            return $this->elementToArray($element);
-        }
+        return match ($this->selectionType) {
+            'text' => trim($element->textContent),
+            'tag' => $element->nodeName,
+            'domelement' => $element,
+            default => $this->elementToArray($element),
+        };
     }
 
     /**
      * Get the results of the current selection.
      *
-     * @return \Illuminate\Support\Collection
+     * @return Collection
      */
     public function get(): Collection
     {
         $results = [];
         foreach ($this->elements as $element) {
-            $results[] = $this->applySelection($element);
+            if ($element instanceof DOMElement) {
+                $results[] = $this->applySelection($element);
+            }
         }
 
         return collect($results);
@@ -251,7 +348,7 @@ class DomQuery
     /**
      * Get all elements in the current selection.
      *
-     * @return \Illuminate\Support\Collection
+     * @return Collection
      */
     public function all(): Collection
     {
@@ -263,10 +360,16 @@ class DomQuery
      *
      * @return mixed
      */
-    public function first()
+    public function first(): mixed
     {
-        $firstElement = collect(iterator_to_array($this->elements))->first();
-        return $firstElement ? $this->applySelection($firstElement) : null;
+        $elements = $this->iterableToArray($this->elements);
+        $firstElement = reset($elements);
+
+        if ($firstElement instanceof DOMElement) {
+            return $this->applySelection($firstElement);
+        }
+
+        return null;
     }
 
     /**
@@ -274,21 +377,27 @@ class DomQuery
      *
      * @return mixed
      */
-    public function last()
+    public function last(): mixed
     {
-        $lastElement = collect(iterator_to_array($this->elements))->last();
-        return $lastElement ? $this->applySelection($lastElement) : null;
+        $elements = $this->iterableToArray($this->elements);
+        $lastElement = end($elements);
+
+        if ($lastElement instanceof DOMElement) {
+            return $this->applySelection($lastElement);
+        }
+
+        return null;
     }
 
     /**
      * Find the first element by tag name or throw an exception.
      *
-     * @param  string  $tag
+     * @param string $tag
      * @return mixed
      *
-     * @throws \Exception
+     * @throws Exception
      */
-    public function findOrFail($tag)
+    public function findOrFail(string $tag): mixed
     {
         $results = $this->find($tag)->get();
         if ($results->isEmpty()) {
@@ -300,10 +409,10 @@ class DomQuery
     /**
      * Get the latest element based on a specific attribute.
      *
-     * @param  string  $attribute
+     * @param string $attribute
      * @return mixed
      */
-    public function latest($attribute = 'data-order')
+    public function latest(string $attribute = 'data-order'): mixed
     {
         return $this->orderByDesc($attribute)->first();
     }
@@ -311,52 +420,62 @@ class DomQuery
     /**
      * Filter elements that contain the specified text.
      *
-     * @param  string  $text
+     * @param string $text
      * @return self
      */
-    public function contains($text): self
+    public function contains(string $text): self
     {
-        $this->elements = $this->xpath->query("//*[contains(text(), '$text')]");
+        $escapedText = self::escapeXPathValue($text);
+        $result = $this->xpath->query("//*[contains(text(), $escapedText)]");
+        $this->elements = $result !== false ? $result : new ArrayIterator([]);
         return $this;
     }
 
     /**
      * Find elements within a given element by their tag name.
      *
-     * @param  \DOMElement  $element
-     * @param  string  $tag
+     * @param DOMElement $element
+     * @param string $tag
      * @return self
      */
-    public function findWithin($element, $tag): self
+    public function findWithin(DOMElement $element, string $tag): self
     {
+        $sanitizedTag = self::sanitizeElementName($tag);
         $subXpath = new DOMXPath($element->ownerDocument);
-        $nodes = $subXpath->query(".//{$tag}", $element);
+        $nodes = $subXpath->query(".//{$sanitizedTag}", $element);
 
-        return new self($element->ownerDocument, iterator_to_array($nodes));
+        $elements = $nodes !== false ? iterator_to_array($nodes) : [];
+        return new self($element->ownerDocument, $elements);
     }
 
     /**
      * Order elements by a specific attribute.
      *
-     * @param  string  $attribute
-     * @param  string  $direction
+     * @param string $attribute
+     * @param string $direction
      * @return self
      */
-    public function orderBy($attribute, $direction = 'asc'): self
+    public function orderBy(string $attribute, string $direction = 'asc'): self
     {
-        $this->elements = collect(iterator_to_array($this->elements))
-            ->sortBy(fn($element) => $element->getAttribute($attribute), SORT_REGULAR, $direction === 'desc')
+        $sanitizedAttr = self::sanitizeAttributeName($attribute);
+        $elements = $this->iterableToArray($this->elements);
+
+        $sorted = collect($elements)
+            ->sortBy(fn($element) => $element instanceof DOMElement ? $element->getAttribute($sanitizedAttr) : '', SORT_REGULAR, $direction === 'desc')
+            ->values()
             ->all();
+
+        $this->elements = $sorted;
         return $this;
     }
 
     /**
      * Order elements in descending order by a specific attribute.
      *
-     * @param  string  $attribute
+     * @param string $attribute
      * @return self
      */
-    public function orderByDesc($attribute): self
+    public function orderByDesc(string $attribute): self
     {
         return $this->orderBy($attribute, 'desc');
     }
@@ -364,8 +483,8 @@ class DomQuery
     /**
      * Limit the number of results returned.
      *
-     * @param  int  $count
-     * @return \Illuminate\Support\Collection
+     * @param int $count
+     * @return Collection
      */
     public function limit(int $count): Collection
     {
@@ -375,10 +494,10 @@ class DomQuery
     /**
      * Convert a DOMElement to an array representation.
      *
-     * @param  \DOMElement  $element
+     * @param DOMElement $element
      * @return array
      */
-    protected function elementToArray($element): array
+    protected function elementToArray(DOMElement $element): array
     {
         $node = ['tag' => $element->nodeName, 'attributes' => []];
 
@@ -388,7 +507,14 @@ class DomQuery
 
         $node['children'] = [];
         foreach ($element->childNodes as $child) {
-            $node['children'][] = $child instanceof \DOMElement ? $this->elementToArray($child) : trim($child->textContent);
+            if ($child instanceof DOMElement) {
+                $node['children'][] = $this->elementToArray($child);
+            } else {
+                $text = trim($child->textContent);
+                if ($text !== '') {
+                    $node['children'][] = $text;
+                }
+            }
         }
 
         return $node;
@@ -397,19 +523,20 @@ class DomQuery
     /**
      * Extract the values of a specific attribute from the elements.
      *
-     * @param  string  $attribute
-     * @return \Illuminate\Support\Collection
+     * @param string $attribute
+     * @return Collection
      */
-    public function pluck($attribute): Collection
+    public function pluck(string $attribute): Collection
     {
-        return collect(iterator_to_array($this->elements))
+        return collect($this->iterableToArray($this->elements))
             ->map(function ($element) use ($attribute) {
-                if ($element instanceof \DOMElement) {
-                    return $element->getAttribute($attribute) ?: null;
+                if ($element instanceof DOMElement) {
+                    $value = $element->getAttribute($attribute);
+                    return $value !== '' ? $value : null;
                 }
                 return null;
             })
-            ->filter(); // Filter out null values if needed
+            ->filter();
     }
 
     /**
@@ -435,10 +562,10 @@ class DomQuery
     /**
      * Get the value of a specific attribute from the first element.
      *
-     * @param  string  $attribute
+     * @param string $attribute
      * @return mixed
      */
-    public function value($attribute)
+    public function value(string $attribute): mixed
     {
         $firstElement = $this->first();
         return $firstElement['attributes'][$attribute] ?? null;
@@ -447,8 +574,8 @@ class DomQuery
     /**
      * Take a limited number of elements from the selection.
      *
-     * @param  int  $limit
-     * @return \Illuminate\Support\Collection
+     * @param int $limit
+     * @return Collection
      */
     public function take(int $limit): Collection
     {
@@ -458,13 +585,28 @@ class DomQuery
     /**
      * Chunk the results of the selection and pass each chunk to a callback.
      *
-     * @param  int  $size
-     * @param  callable  $callback
+     * @param int $size
+     * @param callable $callback
      * @return self
      */
     public function chunk(int $size, callable $callback): self
     {
         $this->get()->chunk($size)->each($callback);
         return $this;
+    }
+
+    /**
+     * Convert various iterable types to array.
+     *
+     * @param ArrayIterator|DOMNodeList|array $iterable
+     * @return array
+     */
+    protected function iterableToArray(ArrayIterator|DOMNodeList|array $iterable): array
+    {
+        if (is_array($iterable)) {
+            return $iterable;
+        }
+
+        return iterator_to_array($iterable);
     }
 }
