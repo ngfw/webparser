@@ -8,26 +8,42 @@ class WebparserServiceProvider extends ServiceProvider
 {
     /**
      * Bootstrap the application services.
+     *
+     * @return void
      */
-    public function boot()
+    public function boot(): void
     {
+        //
     }
 
     /**
      * Register the application services.
+     *
+     * @return void
      */
-    public function register()
+    public function register(): void
     {
-        // Register the main class to use with the facade
-        $this->app->bind('webparser', function ($app, $params) {
-            $source = $params['source'] ?? null;
-            $elements = $params['elements'] ?? null;
-            
-            if ($source === null) {
-                throw new \InvalidArgumentException('The WebParser requires a $source argument.');
+        // Bind DomQuery class for dependency injection
+        $this->app->bind(DomQuery::class, function ($app, array $params = []) {
+            if (isset($params['document'])) {
+                return new DomQuery($params['document'], $params['elements'] ?? null);
             }
 
-            return new DomQuery($source, $elements);
+            // Return a placeholder that can be initialized later via fromUrl() or fromHtml()
+            return new class {
+                public function fromUrl(string $url, array $options = []): DomQuery
+                {
+                    return DomQuery::fromUrl($url, $options);
+                }
+
+                public function fromHtml(string $html): DomQuery
+                {
+                    return DomQuery::fromHtml($html);
+                }
+            };
         });
+
+        // Bind 'webparser' alias for the facade
+        $this->app->alias(DomQuery::class, 'webparser');
     }
 }
